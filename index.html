@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Calque">
+<meta name="theme-color" content="#000000">
+<title>Calque</title>
+<link rel="apple-touch-icon" id="icon" href="">
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+  html,body{margin:0;height:100%;background:#000;overflow:hidden;font-family:-apple-system,system-ui,sans-serif;color:#fff;overscroll-behavior:none}
+  #video{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;background:#111}
+  #stage{position:fixed;inset:0;touch-action:none;overflow:hidden}
+  #img{position:absolute;left:50%;top:50%;max-width:none;pointer-events:none;transform-origin:center;display:none;will-change:transform}
+  #start{position:fixed;inset:0;z-index:20;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;text-align:center;padding:24px}
+  #start h1{margin:0;font-size:28px}
+  #start p{margin:0;color:#aaa;max-width:300px;line-height:1.4}
+  button,.btn{font:inherit;color:#fff;background:rgba(40,40,45,.85);border:1px solid rgba(255,255,255,.2);border-radius:14px;padding:12px 16px;-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)}
+  .primary{background:#0a84ff;border-color:#0a84ff;font-weight:600;font-size:17px;padding:14px 28px}
+  #ui{position:fixed;left:0;right:0;bottom:0;z-index:10;padding:12px 14px calc(12px + env(safe-area-inset-bottom));background:linear-gradient(transparent,rgba(0,0,0,.7) 35%);display:flex;flex-direction:column;gap:10px;transition:opacity .2s}
+  #ui.hidden{opacity:0;pointer-events:none}
+  .row{display:flex;gap:8px;align-items:center}
+  .row label{font-size:13px;width:70px;color:#ddd;flex:none}
+  .row input[type=range]{flex:1;accent-color:#0a84ff;height:28px}
+  .row span{font-size:13px;width:42px;text-align:right;flex:none;color:#ddd}
+  .btns{display:flex;gap:8px;flex-wrap:wrap}
+  .btns button{flex:1 1 0;padding:11px 6px;font-size:14px;white-space:nowrap}
+  button.on{background:#0a84ff;border-color:#0a84ff}
+  #eye{position:fixed;top:calc(10px + env(safe-area-inset-top));right:12px;z-index:11;padding:10px 14px;font-size:18px}
+  #hint{position:fixed;top:calc(14px + env(safe-area-inset-top));left:14px;z-index:5;font-size:13px;color:#fff;background:rgba(0,0,0,.55);padding:8px 12px;border-radius:12px;max-width:65%;pointer-events:none}
+  #err{position:fixed;top:40%;left:20px;right:20px;z-index:15;text-align:center;background:rgba(0,0,0,.8);padding:16px;border-radius:14px;display:none}
+</style>
+</head>
+<body>
+
+<video id="video" playsinline muted autoplay></video>
+<div id="stage"><img id="img" alt=""></div>
+<div id="hint">Importe un dessin pour commencer</div>
+<div id="err"></div>
+<button id="eye" title="Masquer l'interface">👁</button>
+
+<div id="ui">
+  <div class="row"><label>Opacité</label><input type="range" id="op" min="0" max="100" value="50"><span id="opv">50%</span></div>
+  <div class="row"><label>Rotation</label><input type="range" id="rot" min="-180" max="180" value="0"><span id="rotv">0°</span></div>
+  <div class="row"><label>Taille</label><input type="range" id="size" min="10" max="400" value="100"><span id="sizev">100%</span></div>
+  <div class="btns">
+    <button id="import">📂 Dessin</button>
+    <button id="flip">↔︎ Miroir</button>
+    <button id="bw">◐ N&amp;B</button>
+    <button id="lock">🔓 Bloquer</button>
+    <button id="cam">🔄 Caméra</button>
+  </div>
+  <div class="btns"><button id="reset">Recentrer</button></div>
+</div>
+
+<input type="file" id="file" accept="image/*" hidden>
+
+<div id="start">
+  <h1>✏️ Calque</h1>
+  <p>Superpose un dessin sur la caméra pour le décalquer. Pince pour zoomer et tourner, glisse pour déplacer.</p>
+  <button class="primary" id="go">Démarrer la caméra</button>
+</div>
+
+<script>
+(function(){
+  const $ = id => document.getElementById(id);
+  const video = $('video'), img = $('img'), stage = $('stage');
+
+  // --- Icône + manifest générés à la volée (une seule page suffit) ---
+  (function(){
+    const c = document.createElement('canvas'); c.width = c.height = 180;
+    const g = c.getContext('2d');
+    g.fillStyle = '#0a84ff'; g.fillRect(0,0,180,180);
+    g.fillStyle = '#fff'; g.font = '110px serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText('✏️', 90, 98);
+    const url = c.toDataURL('image/png');
+    $('icon').href = url;
+    try {
+      const m = {name:'Calque',short_name:'Calque',display:'standalone',background_color:'#000000',theme_color:'#000000',start_url:'./',icons:[{src:url,sizes:'180x180',type:'image/png'}]};
+      const l = document.createElement('link'); l.rel = 'manifest';
+      l.href = URL.createObjectURL(new Blob([JSON.stringify(m)],{type:'application/manifest+json'}));
+      document.head.appendChild(l);
+    } catch(e){}
+  })();
+
+  // --- Caméra ---
+  let stream = null, facing = 'environment';
+  async function startCam(){
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:facing},width:{ideal:1920},height:{ideal:1080}},audio:false});
+      video.srcObject = stream;
+      await video.play();
+      $('err').style.display = 'none';
+      $('start').style.display = 'none';
+      video.style.transform = facing === 'user' ? 'scaleX(-1)' : '';
+      keepAwake();
+    } catch(e){
+      const err = $('err');
+      err.textContent = "Caméra inaccessible. Autorise-la dans Réglages › Safari (ou l'app) et vérifie que la page est en HTTPS.";
+      err.style.display = 'block';
+    }
+  }
+  $('go').onclick = startCam;
+  $('cam').onclick = () => { facing = facing === 'environment' ? 'user' : 'environment'; startCam(); };
+
+  let wl = null;
+  async function keepAwake(){ try { if ('wakeLock' in navigator) wl = await navigator.wakeLock.request('screen'); } catch(e){} }
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && stream) keepAwake(); });
+
+  // --- État du calque ---
+  const S = {x:0, y:0, s:1, r:0, flip:1, op:.5, locked:false, bw:false};
+  function render(){
+    img.style.transform = `translate(-50%,-50%) translate(${S.x}px,${S.y}px) rotate(${S.r}deg) scale(${S.s*S.flip},${S.s})`;
+    img.style.opacity = S.op;
+    img.style.filter = S.bw ? 'grayscale(1) contrast(1.4)' : 'none';
+    $('op').value = S.op*100; $('opv').textContent = Math.round(S.op*100)+'%';
+    let r = ((S.r+180)%360+360)%360-180;
+    $('rot').value = r; $('rotv').textContent = Math.round(r)+'°';
+    $('size').value = Math.min(400,Math.max(10,S.s*100)); $('sizev').textContent = Math.round(S.s*100)+'%';
+  }
+
+  // --- Import du dessin ---
+  $('import').onclick = () => $('file').click();
+  $('file').onchange = e => {
+    const f = e.target.files[0]; if (!f) return;
+    const url = URL.createObjectURL(f);
+    img.onload = () => {
+      const fit = Math.min(innerWidth*.85/img.naturalWidth, innerHeight*.6/img.naturalHeight);
+      img.style.width = img.naturalWidth+'px'; img.style.height = img.naturalHeight+'px';
+      Object.assign(S,{x:0,y:0,s:fit,r:0});
+      img.style.display = 'block';
+      $('hint').textContent = 'Glisse pour déplacer · pince pour zoomer/tourner';
+      render();
+    };
+    img.src = url;
+    e.target.value = '';
+  };
+
+  // --- Gestes (1 doigt = déplacer, 2 doigts = zoom + rotation) ---
+  const ptrs = new Map();
+  let g0 = null;
+  function snapshot(){
+    const p = [...ptrs.values()];
+    if (p.length >= 2){
+      const [a,b] = p;
+      g0 = {d:Math.hypot(b.x-a.x,b.y-a.y), a:Math.atan2(b.y-a.y,b.x-a.x), mx:(a.x+b.x)/2, my:(a.y+b.y)/2, s:S.s, r:S.r, x:S.x, y:S.y};
+    } else if (p.length === 1){
+      g0 = {mx:p[0].x, my:p[0].y, x:S.x, y:S.y};
+    } else g0 = null;
+  }
+  stage.addEventListener('pointerdown', e => {
+    if (S.locked || img.style.display !== 'block') return;
+    stage.setPointerCapture(e.pointerId);
+    ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    snapshot();
+  });
+  stage.addEventListener('pointermove', e => {
+    if (!ptrs.has(e.pointerId) || !g0) return;
+    ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    const p = [...ptrs.values()];
+    if (p.length >= 2 && g0.d){
+      const [a,b] = p;
+      const d = Math.hypot(b.x-a.x,b.y-a.y), ang = Math.atan2(b.y-a.y,b.x-a.x);
+      S.s = Math.max(.05, g0.s*d/g0.d);
+      S.r = g0.r + (ang-g0.a)*180/Math.PI;
+      S.x = g0.x + ((a.x+b.x)/2 - g0.mx);
+      S.y = g0.y + ((a.y+b.y)/2 - g0.my);
+    } else if (p.length === 1){
+      S.x = g0.x + (p[0].x - g0.mx);
+      S.y = g0.y + (p[0].y - g0.my);
+    }
+    render();
+  });
+  const up = e => { ptrs.delete(e.pointerId); snapshot(); };
+  stage.addEventListener('pointerup', up);
+  stage.addEventListener('pointercancel', up);
+
+  // --- Contrôles ---
+  $('op').oninput   = e => { S.op = e.target.value/100; render(); };
+  $('rot').oninput  = e => { S.r = +e.target.value; render(); };
+  $('size').oninput = e => { S.s = e.target.value/100; render(); };
+  $('flip').onclick = () => { S.flip *= -1; render(); };
+  $('bw').onclick   = e => { S.bw = !S.bw; e.target.classList.toggle('on', S.bw); render(); };
+  $('lock').onclick = e => {
+    S.locked = !S.locked;
+    e.target.textContent = S.locked ? '🔒 Bloqué' : '🔓 Bloquer';
+    e.target.classList.toggle('on', S.locked);
+  };
+  $('reset').onclick = () => { S.x = 0; S.y = 0; S.r = 0; render(); };
+  $('eye').onclick = () => {
+    const h = $('ui').classList.toggle('hidden');
+    $('hint').style.display = h ? 'none' : 'block';
+  };
+
+  // Empêche le zoom/scroll Safari
+  ['gesturestart','gesturechange','gestureend'].forEach(t => document.addEventListener(t, e => e.preventDefault()));
+  document.addEventListener('touchmove', e => { if (e.target === stage || e.target === img) e.preventDefault(); }, {passive:false});
+
+  render();
+})();
+</script>
+</body>
+</html>
