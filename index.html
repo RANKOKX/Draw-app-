@@ -2,7 +2,7 @@
 <html lang="fr">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, viewport-fit=cover, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -12,6 +12,7 @@
 <link rel="apple-touch-icon" id="icon" href="">
 <style>
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+  html,body,button,input{touch-action:manipulation}
   html,body{margin:0;height:100%;background:#000;overflow:hidden;font-family:-apple-system,system-ui,sans-serif;color:#fff;overscroll-behavior:none}
   #video{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;background:#111}
   #stage{position:fixed;inset:0;touch-action:none;overflow:hidden}
@@ -44,6 +45,7 @@
 <button id="eye" title="Masquer l'interface">👁</button>
 
 <div id="ui">
+  <div class="row"><label>Zoom 📷</label><input type="range" id="zoom" min="0.5" max="5" step="0.1" value="1"><span id="zoomv">1×</span></div>
   <div class="row"><label>Opacité</label><input type="range" id="op" min="0" max="100" value="50"><span id="opv">50%</span></div>
   <div class="row"><label>Rotation</label><input type="range" id="rot" min="-180" max="180" value="0"><span id="rotv">0°</span></div>
   <div class="row"><label>Taille</label><input type="range" id="size" min="10" max="400" value="100"><span id="sizev">100%</span></div>
@@ -92,12 +94,12 @@
   async function startCam(){
     if (stream) stream.getTracks().forEach(t => t.stop());
     try {
-      stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:facing},width:{ideal:1920},height:{ideal:1080}},audio:false});
+      stream = await openStream();
       video.srcObject = stream;
       await video.play();
       $('err').style.display = 'none';
       $('start').style.display = 'none';
-      video.style.transform = facing === 'user' ? 'scaleX(-1)' : '';
+      await initZoom();
       keepAwake();
     } catch(e){
       const err = $('err');
@@ -106,7 +108,74 @@
     }
   }
   $('go').onclick = startCam;
-  $('cam').onclick = () => { facing = facing === 'environment' ? 'user' : 'environment'; startCam(); };
+  $('cam').onclick = () => { facing = facing === 'environment' ? 'user' : 'environment'; devId = null; startCam(); };
+
+  // --- Zoom caméra : 0,5× (ultra grand-angle) jusqu'au max de l'iPhone ---
+  let devId = null, ultraId = null, mainId = null, curKind = 'main';
+  let curCap = null, native05 = false, maxZ = 5, Z = 1, busy = false, pending = null;
+  const zs = $('zoom'), zv = $('zoomv');
+
+  function openStream(){
+    const v = {width:{ideal:1920}, height:{ideal:1080}};
+    if (devId) v.deviceId = {exact:devId}; else v.facingMode = {ideal:facing};
+    return navigator.mediaDevices.getUserMedia({video:v, audio:false});
+  }
+  function readCap(){
+    const t = stream.getVideoTracks()[0];
+    curCap = (t.getCapabilities && t.getCapabilities().zoom) || null;
+    return t;
+  }
+  async function initZoom(){
+    const t = readCap();
+    curKind = 'main'; mainId = t.getSettings().deviceId || null; ultraId = null;
+    try {
+      if (facing === 'environment'){
+        const ds = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+        const u = ds.find(d => /ultra/i.test(d.label));
+        ultraId = u ? u.deviceId : null;
+      }
+    } catch(e){}
+    native05 = !!(curCap && curCap.min <= 0.51);
+    maxZ = curCap ? curCap.max : 5;
+    zs.min = native05 ? curCap.min : (ultraId ? 0.5 : 1);
+    zs.max = Math.max(1, maxZ);
+    zs.value = 1;
+    await setZoom(1);
+  }
+  async function restart(){
+    stream.getTracks().forEach(t => t.stop());
+    stream = await openStream();
+    video.srcObject = stream;
+    await video.play();
+    readCap();
+  }
+  async function applyZ(){
+    const f = curKind === 'ultra' ? Z/0.5 : Z;
+    let css = 1;
+    if (curCap){
+      const val = Math.min(curCap.max, Math.max(curCap.min, f));
+      try { await stream.getVideoTracks()[0].applyConstraints({advanced:[{zoom:val}]}); }
+      catch(e){ css = Math.max(1, f); }
+    } else {
+      css = Math.max(1, f);
+    }
+    video.style.transform = (facing === 'user' ? 'scaleX(-1) ' : '') + 'scale(' + css + ')';
+  }
+  async function setZoom(z){
+    Z = z;
+    zv.textContent = (Math.round(z*10)/10) + '×';
+    if (busy){ pending = z; return; }
+    busy = true;
+    try {
+      const needUltra = !native05 && !!ultraId && facing === 'environment' && z < 1;
+      if (needUltra && curKind !== 'ultra'){ devId = ultraId; curKind = 'ultra'; await restart(); }
+      else if (!needUltra && curKind === 'ultra'){ devId = mainId; curKind = 'main'; await restart(); }
+      await applyZ();
+    } catch(e){}
+    busy = false;
+    if (pending !== null){ const p = pending; pending = null; setZoom(p); }
+  }
+  zs.oninput = e => setZoom(+e.target.value);
 
   let wl = null;
   async function keepAwake(){ try { if ('wakeLock' in navigator) wl = await navigator.wakeLock.request('screen'); } catch(e){} }
@@ -199,6 +268,8 @@
 
   // Empêche le zoom/scroll Safari
   ['gesturestart','gesturechange','gestureend'].forEach(t => document.addEventListener(t, e => e.preventDefault()));
+  document.addEventListener('touchstart', e => { if (e.touches.length > 1) e.preventDefault(); }, {passive:false});
+  document.addEventListener('dblclick', e => e.preventDefault());
   document.addEventListener('touchmove', e => { if (e.target === stage || e.target === img) e.preventDefault(); }, {passive:false});
 
   render();
